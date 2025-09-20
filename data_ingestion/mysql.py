@@ -1,13 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 mysql.py
-- 建立 MySQL 連線、資料表結構
+- 集中管理 MySQL schema 與連線
 - 提供 init_db() 與 upsert/批次上傳工具
-
-用法：
-from data_ingestion.mysql import init_db, upload_data_to_mysql_upsert, etf_dividend, etf_day_price
-init_db()
-upload_data_to_mysql_upsert(etf_dividend, rows)  # rows: List[dict]
 """
 
 from __future__ import annotations
@@ -51,7 +46,6 @@ etf_dividend = Table(
     Column("record_date", Date, nullable=True, comment="基準日"),
     Column("payable_date", Date, nullable=True, comment="發放日"),
     Column("cash_dividend", DECIMAL(12, 4), nullable=True, comment="現金股利/受益權益單位"),
-    # 時間戳（可有可無；不在 UPSERT 更新清單中）
     Column("created_at", TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"), nullable=False),
     Column("updated_at", TIMESTAMP, server_default=text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"), nullable=False),
     UniqueConstraint("ticker", "ex_date", name="uq_etf_dividend_ticker_exdate"),
@@ -59,6 +53,7 @@ etf_dividend = Table(
 
 # ------------------------------------------------------------
 # 表：ETF 日價（唯一鍵：ticker + trade_date）
+#   *把 adjusted_close 納入正式 schema*
 # ------------------------------------------------------------
 etf_day_price = Table(
     "etf_day_price",
@@ -72,6 +67,7 @@ etf_day_price = Table(
     Column("high", DECIMAL(12, 3), nullable=True, comment="最高價"),
     Column("low", DECIMAL(12, 3), nullable=True, comment="最低價"),
     Column("close", DECIMAL(12, 3), nullable=True, comment="收盤價"),
+    Column("adjusted_close", DECIMAL(16, 6), nullable=True, comment="還原收盤"),
     Column("trades", Integer, nullable=True, comment="成交筆數"),
     Column("created_at", TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"), nullable=False),
     Column("updated_at", TIMESTAMP, server_default=text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"), nullable=False),
@@ -79,16 +75,69 @@ etf_day_price = Table(
 )
 
 # ------------------------------------------------------------
-# 建立資料庫表（若不存在才建立）
+# 表：指標落地（唯一鍵：ticker + trade_date）
+# ------------------------------------------------------------
+etf_metrics_daily = Table(
+    "etf_metrics_daily",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("ticker", String(16), nullable=False),
+    Column("trade_date", Date, nullable=False),
+    Column("adjusted_close", DECIMAL(16, 6)),
+    Column("daily_return", DECIMAL(16, 8)),
+    Column("tri_total_return", DECIMAL(16, 8)),
+    Column("vol_252", DECIMAL(16, 8)),
+    Column("sharpe_60d", DECIMAL(16, 8)),
+    Column("drawdown", DECIMAL(16, 8)),
+    Column("mdd", DECIMAL(16, 8)),
+    Column("dividend_12m", DECIMAL(16, 6)),
+    Column("dividend_yield_12m", DECIMAL(16, 8)),
+    Column("created_at", TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"), nullable=False),
+    Column("updated_at", TIMESTAMP, server_default=text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"), nullable=False),
+    UniqueConstraint("ticker", "trade_date", name="uq_metrics"),
+)
+
+# ------------------------------------------------------------
+# 建立資料庫表（若不存在才建立）＋ 輕量遷移保險
 # ------------------------------------------------------------
 def init_db() -> None:
     engine = create_engine(_mysql_url(), pool_pre_ping=True)
-    metadata.create_all(engine, tables=[etf_dividend, etf_day_price])
+
+    # 建表（不存在才建）
+    metadata.create_all(engine, tables=[etf_dividend, etf_day_price, etf_metrics_daily])
+
+    # 輕量遷移（舊庫補欄位 / 補索引；MySQL 8 沒有 CREATE INDEX IF NOT EXISTS → 先查再建）
+    with engine.begin() as conn:
+        # 確保 adjusted_close 存在（舊環境沒有時補上）
+        cnt = conn.execute(text("""
+            SELECT COUNT(*) FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA=:db AND TABLE_NAME='etf_day_price' AND COLUMN_NAME='adjusted_close'
+        """), {"db": MYSQL_DB}).scalar()
+        if (cnt or 0) == 0:
+            conn.execute(text("ALTER TABLE etf_day_price ADD COLUMN adjusted_close DECIMAL(16,6) NULL"))
+
+        # UNIQUE 索引保險（查不到才建立）
+        def _ensure_unique_idx(tbl: str, idx: str):
+            q = text("""
+                SELECT COUNT(*) FROM information_schema.STATISTICS
+                WHERE TABLE_SCHEMA=:db AND TABLE_NAME=:tbl AND INDEX_NAME=:idx
+            """)
+            c = conn.execute(q, {"db": MYSQL_DB, "tbl": tbl, "idx": idx}).scalar()
+            if (c or 0) == 0:
+                # 依名稱建立（欄位已在 Table 定義過，這裡用顯式 SQL 確保存在）
+                if tbl == "etf_day_price" and idx == "uq_etf_price_ticker_tradedate":
+                    conn.execute(text("CREATE UNIQUE INDEX uq_etf_price_ticker_tradedate ON etf_day_price (ticker, trade_date)"))
+                elif tbl == "etf_dividend" and idx == "uq_etf_dividend_ticker_exdate":
+                    conn.execute(text("CREATE UNIQUE INDEX uq_etf_dividend_ticker_exdate ON etf_dividend (ticker, ex_date)"))
+                elif tbl == "etf_metrics_daily" and idx == "uq_metrics":
+                    conn.execute(text("CREATE UNIQUE INDEX uq_metrics ON etf_metrics_daily (ticker, trade_date)"))
+
+        _ensure_unique_idx("etf_day_price", "uq_etf_price_ticker_tradedate")
+        _ensure_unique_idx("etf_dividend", "uq_etf_dividend_ticker_exdate")
+        _ensure_unique_idx("etf_metrics_daily", "uq_metrics")
 
 # ------------------------------------------------------------
-# UPSERT：依 Table 的 UniqueConstraint / Primary Key 做更新
-#   - 只更新表內存在、且非主鍵、且不是 created_at/updated_at 的欄位
-#   - data: List[dict]，鍵名需對應欄位名
+# UPSERT：依 UNIQUE/PK 做更新（批次執行）
 # ------------------------------------------------------------
 def upload_data_to_mysql_upsert(table_obj: Table, data: List[Dict[str, Any]]) -> None:
     if not data:
@@ -107,18 +156,15 @@ def upload_data_to_mysql_upsert(table_obj: Table, data: List[Dict[str, Any]]) ->
     ]
 
     with engine.begin() as conn:
-        for row in data:
-            ins = insert(table_obj).values(**row)
-            update_dict = {c: ins.inserted[c] for c in updatable_cols}
-            stmt = ins.on_duplicate_key_update(**update_dict)
-            conn.execute(stmt)
+        ins = insert(table_obj)
+        update_dict = {c: ins.inserted[c] for c in updatable_cols}
+        stmt = ins.on_duplicate_key_update(**update_dict)
+        conn.execute(stmt, data)   # 一次丟整批（比逐筆快很多）
 
 # ------------------------------------------------------------
 # 批次整表覆蓋（可選）：用 pandas.to_sql
-#   df: pandas.DataFrame；mode: "replace" / "append"
 # ------------------------------------------------------------
 def upload_dataframe(table_name: str, df, mode: str = "replace") -> None:
-    from sqlalchemy import text as _text  # 延遲載入避免不必要相依
     engine = create_engine(_mysql_url(), pool_pre_ping=True)
     with engine.begin() as conn:
         df.to_sql(table_name, con=conn, if_exists=mode, index=False)
