@@ -53,7 +53,7 @@ etf_dividend = Table(
 
 # ------------------------------------------------------------
 # 表：ETF 日價（唯一鍵：ticker + trade_date）
-#   *把 adjusted_close 納入正式 schema*
+#   *包含 adjusted_close（由 pipeline 計算 UPDATE），crawler 不會寫入*
 # ------------------------------------------------------------
 etf_day_price = Table(
     "etf_day_price",
@@ -102,11 +102,9 @@ etf_metrics_daily = Table(
 # ------------------------------------------------------------
 def init_db() -> None:
     engine = create_engine(_mysql_url(), pool_pre_ping=True)
-
-    # 建表（不存在才建）
     metadata.create_all(engine, tables=[etf_dividend, etf_day_price, etf_metrics_daily])
 
-    # 輕量遷移（舊庫補欄位 / 補索引；MySQL 8 沒有 CREATE INDEX IF NOT EXISTS → 先查再建）
+    # 輕量遷移：舊庫補欄位 / 補索引（MySQL 8 沒有 CREATE INDEX IF NOT EXISTS → 先查再建）
     with engine.begin() as conn:
         # 確保 adjusted_close 存在（舊環境沒有時補上）
         cnt = conn.execute(text("""
@@ -116,7 +114,7 @@ def init_db() -> None:
         if (cnt or 0) == 0:
             conn.execute(text("ALTER TABLE etf_day_price ADD COLUMN adjusted_close DECIMAL(16,6) NULL"))
 
-        # UNIQUE 索引保險（查不到才建立）
+        # UNIQUE 索引保險
         def _ensure_unique_idx(tbl: str, idx: str):
             q = text("""
                 SELECT COUNT(*) FROM information_schema.STATISTICS
@@ -124,7 +122,6 @@ def init_db() -> None:
             """)
             c = conn.execute(q, {"db": MYSQL_DB, "tbl": tbl, "idx": idx}).scalar()
             if (c or 0) == 0:
-                # 依名稱建立（欄位已在 Table 定義過，這裡用顯式 SQL 確保存在）
                 if tbl == "etf_day_price" and idx == "uq_etf_price_ticker_tradedate":
                     conn.execute(text("CREATE UNIQUE INDEX uq_etf_price_ticker_tradedate ON etf_day_price (ticker, trade_date)"))
                 elif tbl == "etf_dividend" and idx == "uq_etf_dividend_ticker_exdate":
@@ -138,28 +135,35 @@ def init_db() -> None:
 
 # ------------------------------------------------------------
 # UPSERT：依 UNIQUE/PK 做更新（批次執行）
+# 只更新「本次 INSERT 有帶到」且「非主鍵／非時間戳」的欄位
 # ------------------------------------------------------------
 def upload_data_to_mysql_upsert(table_obj: Table, data: List[Dict[str, Any]]) -> None:
     if not data:
         return
 
     engine = create_engine(_mysql_url(), pool_pre_ping=True)
-    # 確保表存在（不會覆蓋）
     metadata.create_all(engine, tables=[table_obj])
 
-    # 計算可更新欄位
+    # 資料表欄位 / 主鍵
     column_names = [c.name for c in table_obj.columns]
-    pk_names = [c.name for c in table_obj.primary_key.columns]
+    pk_names = {c.name for c in table_obj.primary_key.columns}
+
+    # 這批資料「實際要 INSERT 的欄位」（任一列有帶到就算）
+    inserted_keys = set()
+    for row in data:
+        inserted_keys |= set(row.keys())
+
+    # 只允許更新：同時「在表中存在」且「這次 INSERT 有帶到」且「不是 PK/時間戳」的欄位
     updatable_cols = [
         c for c in column_names
-        if c not in pk_names and c not in ("created_at", "updated_at")
+        if c in inserted_keys and c not in pk_names and c not in ("created_at", "updated_at")
     ]
 
     with engine.begin() as conn:
         ins = insert(table_obj)
         update_dict = {c: ins.inserted[c] for c in updatable_cols}
         stmt = ins.on_duplicate_key_update(**update_dict)
-        conn.execute(stmt, data)   # 一次丟整批（比逐筆快很多）
+        conn.execute(stmt, data)   # 批次 UPSERT
 
 # ------------------------------------------------------------
 # 批次整表覆蓋（可選）：用 pandas.to_sql
