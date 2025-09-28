@@ -1,0 +1,25 @@
+version: "3.9"
+services:
+  metabase:
+    image: metabase/metabase:latest
+    container_name: metabase
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      MB_DB_TYPE: "mysql"
+      MB_DB_HOST: "${MB_DB_HOST:-mysql}"
+      MB_DB_PORT: "${MB_DB_PORT:-3306}"
+      MB_DB_DBNAME: "${MB_DB_DBNAME:-metabasedb}"
+      MB_DB_USER: "${MB_DB_USER}"
+      MB_DB_PASS: "${MB_DB_PASS}"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [my_network]
+
+networks:
+  my_network:
+    external: true
