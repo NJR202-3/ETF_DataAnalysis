@@ -7,3 +7,11 @@ output/
 airflow/logs/
 .env
 key.json
+# Windows ADS
+*.Zone.Identifier
+
+
+# GCP keys
+key.json
+keys/*.json
+
