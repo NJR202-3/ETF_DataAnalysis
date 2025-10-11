@@ -1,29 +1,39 @@
-version: '3.9'
+# airflow/docker-compose-airflow.yml
+# 方案 1：掛載 .env 到 /opt/airflow/.env，讓 DAG 內可以 source
 
 x-airflow-common: &airflow-common
-  image: ${DOCKER_HUB_USER:-smoon0730}/airflow:latest  
+  # 建議同時保留 build（方便改 Dockerfile 時重建）與 image（統一標籤）
+  build:
+    context: ..
+    dockerfile: airflow/Dockerfile
+  image: ${DOCKER_HUB_USER:-chris}/airflow:latest
+  # 將 .env 注入容器環境（給 Airflow 本身用）
+  env_file:
+    - ../.env
   environment:
-    # Airflow 核心設定
+    # Airflow 基本設定
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
     AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Taipei
-  env_file:
-    - ../.env
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
   volumes:
-    # 將 airflow.cfg、dags、plugins、logs 掛載到容器中，讓 Airflow 可以使用 airflow.cfg 下的設定
+    # 讓 Airflow 使用自訂設定、DAG、plugins、logs
     - ./airflow.cfg:/opt/airflow/airflow.cfg
-    - ./dags:/opt/airflow/dags  # 同步 dags 資料夾，讓改動的 dag 可以即時生效
+    - ./dags:/opt/airflow/dags
     - ./plugins:/opt/airflow/plugins
     - ./logs:/opt/airflow/logs
-    # 將 data_ingestion 和 output 掛載到容器中，讓 Airflow 可以執行 data_ingestion 下的 Python 程式
+    # 把專案程式掛進去，DAG 內可執行 `python -m data_ingestion.xxx`
     - ../data_ingestion:/opt/airflow/data_ingestion
     - ../output:/opt/airflow/output
-    # 將 docker.sock 掛載到容器中，讓 Airflow 可以執行 docker 命令
+    # 把宿主機的 .env 掛進容器（DAG 內會 source /opt/airflow/.env）
+    - ../.env:/opt/airflow/.env
+    # 掛入 GCP 服務帳戶金鑰（請確認路徑與 .env 的 GOOGLE_APPLICATION_CREDENTIALS 一致）
+    - ../key.json:/opt/airflow/key.json
+    # 若有需要在 DAG 用 docker operator，可掛 docker.sock
     - /var/run/docker.sock:/var/run/docker.sock
   networks:
-    - my_network  # 加入 MySQL 的網路
+    - my_network   # 與 MySQL 共用同一個網路，才能用主機名連線（例：MYSQL_HOST=mysql）
 
 services:
   postgres:
@@ -40,20 +50,28 @@ services:
 
   airflow-init:
     <<: *airflow-common
+    container_name: airflow-airflow-init
     command: >
       bash -c "
       airflow db init &&
-      airflow users create --username ${AIRFLOW_ADMIN_USER:-admin} --password ${AIRFLOW_ADMIN_PASS:-admin} --firstname Apache --lastname Airflow --role Admin --email admin@example.com
+      airflow users create
+        --username ${AIRFLOW_ADMIN_USER:-admin}
+        --password ${AIRFLOW_ADMIN_PASS:-admin}
+        --firstname Apache
+        --lastname Airflow
+        --role Admin
+        --email admin@example.com
       "
     depends_on:
       - postgres
 
   airflow-webserver:
     <<: *airflow-common
+    container_name: airflow-webserver
     command: >
       bash -c "exec airflow webserver"
-    container_name: airflow-webserver
-    ports: ["8080:8080"]
+    ports:
+      - "8080:8080"
     healthcheck:
       test: ["CMD-SHELL","curl --fail http://localhost:8080/health || exit 1"]
       interval: 30s
@@ -64,9 +82,9 @@ services:
 
   airflow-scheduler:
     <<: *airflow-common
+    container_name: airflow-scheduler
     command: >
       bash -c "exec airflow scheduler"
-    container_name: airflow-scheduler
     depends_on:
       - airflow-init
 
@@ -75,4 +93,4 @@ volumes:
 
 networks:
   my_network:
-    external: true  # 使用已存在的外部網路
+    external: true   # 使用你先前建立的外部 network（要先 docker network create my_network）
