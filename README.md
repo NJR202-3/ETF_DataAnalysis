@@ -119,7 +119,7 @@ docker compose -f airflow/docker-compose-airflow.yml build --no-cache
 
 # 啟動
 docker compose -f airflow/docker-compose-airflow.yml up -d
-# Web: http://localhost:8080  （帳密：airflow / airflow123）
+# Web: http://localhost:8080  
 
 # 首次初始化（若尚未 init）
 docker compose -f airflow/docker-compose-airflow.yml up -d airflow-init
