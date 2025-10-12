@@ -18,7 +18,7 @@ with DAG(
     dag_id="ETF_bigquery_etl_dag",
     description="Sync MySQL -> BigQuery then build analytics tables/views for ETF",
     start_date=datetime(2025, 1, 1),
-    schedule="30 12 * * *",
+    schedule="30 20 * * *",
     catchup=False,
     max_active_runs=1,
     default_args=default_args,
