@@ -74,15 +74,15 @@ MYSQL_HOST=127.0.0.1        # 本機跑腳本用；Airflow 容器內會覆寫為
 MYSQL_PORT=3306
 MYSQL_DB=ETF
 MYSQL_USER=app
-MYSQL_PASSWORD=app123
+MYSQL_PASSWORD=
 
 # Metabase（應用設定 DB）
 MB_DB_USER=metabase
-MB_DB_PASS=metabase123
+MB_DB_PASS=
 
 # Airflow
 AIRFLOW_ADMIN_USER=airflow
-AIRFLOW_ADMIN_PASS=airflow123
+AIRFLOW_ADMIN_PASS=
 
 # BigQuery / GCP
 GCP_PROJECT_ID=etfproject20250923
