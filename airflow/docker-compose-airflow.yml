@@ -1,39 +1,51 @@
 # airflow/docker-compose-airflow.yml
-# 方案 1：掛載 .env 到 /opt/airflow/.env，讓 DAG 內可以 source
 
 x-airflow-common: &airflow-common
-  # 建議同時保留 build（方便改 Dockerfile 時重建）與 image（統一標籤）
   build:
     context: ..
     dockerfile: airflow/Dockerfile
   image: ${DOCKER_HUB_USER:-chris}/airflow:latest
-  # 將 .env 注入容器環境（給 Airflow 本身用）
+
+  # 將 .env 注入容器（你的 Admin 帳密/FERNET_KEY 可放這裡）
   env_file:
     - ../.env
+
   environment:
     # Airflow 基本設定
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Taipei
+
+    # 資料庫連線（對應下方 postgres 服務名）
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+
+    # 建議設定（可放在 .env）：若未設定，Airflow 仍可工作，但連線等敏感值不會加密
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY:-}
+
+    # Webserver 綁定
+    AIRFLOW__WEBSERVER__WEB_SERVER_HOST: 0.0.0.0
+
   volumes:
-    # 讓 Airflow 使用自訂設定、DAG、plugins、logs
+    # Airflow 設定與目錄
     - ./airflow.cfg:/opt/airflow/airflow.cfg
     - ./dags:/opt/airflow/dags
     - ./plugins:/opt/airflow/plugins
     - ./logs:/opt/airflow/logs
-    # 把專案程式掛進去，DAG 內可執行 `python -m data_ingestion.xxx`
+
+    # 專案程式掛進去，DAG 可直接 import 使用
     - ../data_ingestion:/opt/airflow/data_ingestion
     - ../output:/opt/airflow/output
-    # 把宿主機的 .env 掛進容器（DAG 內會 source /opt/airflow/.env）
+
+    # 提供 DAG 讀取環境變數與金鑰
     - ../.env:/opt/airflow/.env
-    # 掛入 GCP 服務帳戶金鑰（請確認路徑與 .env 的 GOOGLE_APPLICATION_CREDENTIALS 一致）
     - ../key.json:/opt/airflow/key.json
-    # 若有需要在 DAG 用 docker operator，可掛 docker.sock
+
+    # 如需在 DAG 內呼叫 docker
     - /var/run/docker.sock:/var/run/docker.sock
+
   networks:
-    - my_network   # 與 MySQL 共用同一個網路，才能用主機名連線（例：MYSQL_HOST=mysql）
+    - my_network
 
 services:
   postgres:
@@ -51,25 +63,35 @@ services:
   airflow-init:
     <<: *airflow-common
     container_name: airflow-airflow-init
-    command: >
-      bash -c "
-      airflow db init &&
-      airflow users create
-        --username ${AIRFLOW_ADMIN_USER:-admin}
-        --password ${AIRFLOW_ADMIN_PASS:-admin}
-        --firstname Apache
-        --lastname Airflow
-        --role Admin
-        --email admin@example.com
-      "
+    command:
+      - bash
+      - -lc
+      - |
+        # 建議用 migrate（兼具 init 功能）
+        airflow db migrate
+
+        # 如已存在相同使用者則略過，避免重複執行報錯
+        if ! airflow users list | awk '{print $1}' | grep -qx "${AIRFLOW_ADMIN_USER:-admin}"; then
+          airflow users create \
+            --username "${AIRFLOW_ADMIN_USER:-admin}" \
+            --password "${AIRFLOW_ADMIN_PASS:-admin}" \
+            --firstname Apache \
+            --lastname Airflow \
+            --role Admin \
+            --email admin@example.com
+        else
+          echo "User ${AIRFLOW_ADMIN_USER:-admin} already exists; skip create."
+        fi
     depends_on:
       - postgres
 
   airflow-webserver:
     <<: *airflow-common
     container_name: airflow-webserver
-    command: >
-      bash -c "exec airflow webserver"
+    command:
+      - bash
+      - -lc
+      - exec airflow webserver
     ports:
       - "8080:8080"
     healthcheck:
@@ -83,8 +105,10 @@ services:
   airflow-scheduler:
     <<: *airflow-common
     container_name: airflow-scheduler
-    command: >
-      bash -c "exec airflow scheduler"
+    command:
+      - bash
+      - -lc
+      - exec airflow scheduler
     depends_on:
       - airflow-init
 
@@ -93,4 +117,4 @@ volumes:
 
 networks:
   my_network:
-    external: true   # 使用你先前建立的外部 network（要先 docker network create my_network）
+    external: true  # 需先以 `docker network create my_network` 建立
