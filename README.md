@@ -283,7 +283,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/key.json
 
 > GitHub 版面相容：每個指標用**小標題 + 清單 + 獨立 code block**，避免擠成同一行。
 
-### 1) 總報酬率（Total Return） `total_return`
+### 1) 總報酬率（Total Return） 
 
 * 用途：衡量整段期間的整體漲跌幅。
 * 公式（可讀）：
@@ -300,7 +300,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/key.json
 
 ---
 
-### 2) 年化報酬率（CAGR） `cagr`
+### 2) 年化報酬率（Compound Annual Growth Rate:CAGR） 
 
 * 用途：把整段報酬換算成每年的穩定成長率，便於不同區間/產品比較。
 * 公式：
@@ -317,7 +317,7 @@ CAGR = (1 + total_return)^(365/D) − 1
 
 ---
 
-### 3) 最大回撤（Max Drawdown） `max_drawdown`
+### 3) 最大回撤（Max Drawdown） 
 
 * 用途：評估「最壞情況會跌多深」。
 * 公式：
@@ -329,7 +329,7 @@ CAGR = (1 + total_return)^(365/D) − 1
 
 ---
 
-### 4) 年化波動率（Annualized Volatility） `vol_ann`
+### 4) 年化波動率（Annualized Volatility） 
 
 * 用途：衡量價格/報酬的波動程度，是 Sharpe 比的分母。
 * 公式：
@@ -341,7 +341,7 @@ CAGR = (1 + total_return)^(365/D) − 1
 
 ---
 
-### 5) 夏普值（Sharpe Ratio） `sharpe_ratio`
+### 5) 夏普值（Sharpe Ratio） 
 
 * 用途：每承擔 1 單位波動風險可得到多少報酬；越高越好。
 * 公式：
@@ -353,7 +353,7 @@ Sharpe = 年化報酬 ÷ 年化波動
 
 ---
 
-### 6) 近 12 個月殖利率平均 `div_yield_12m_avg`
+### 6) 殖利率-近 12 個月平均 (Dividend Yield)
 
 * 用途：觀察期間內的股息收益水準。
 * 公式：
