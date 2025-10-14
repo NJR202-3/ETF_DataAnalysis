@@ -281,9 +281,9 @@ GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/key.json
 
 ## 🆕 指標
 
-> 每個指標獨立段落＋公式用 code block 呈現，避免在 GitHub 上擠在一起。
+> GitHub 版面相容：每個指標用**小標題 + 清單 + 獨立 code block**，避免擠成同一行。
 
-**1) 總報酬率（Total Return）**  `total_return`
+### 1) 總報酬率（Total Return） `total_return`
 
 * 用途：衡量整段期間的整體漲跌幅。
 * 公式（可讀）：
@@ -295,68 +295,77 @@ GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/key.json
 * 等價寫法（複利）：
 
 ```
-∏(1 + r_t) − 1   # 以日報酬 r_t 連乘
+∏(1 + r_t) − 1
 ```
 
 ---
 
-**2) 年化報酬率（CAGR）**  `cagr`
+### 2) 年化報酬率（CAGR） `cagr`
 
 * 用途：把整段報酬換算成每年的穩定成長率，便於不同區間/產品比較。
 * 公式：
 
 ```
 CAGR = (期末資產 ÷ 期初資產)^(365/實際天數) − 1
-# 等價於：CAGR = (1 + total_return)^(365/D) − 1
+```
+
+* 等價式：
+
+```
+CAGR = (1 + total_return)^(365/D) − 1
 ```
 
 ---
 
-**3) 最大回撤（Max Drawdown）**  `max_drawdown`
+### 3) 最大回撤（Max Drawdown） `max_drawdown`
 
 * 用途：評估「最壞情況會跌多深」。
 * 公式：
 
 ```
-(谷底 − 高峰) ÷ 高峰   # 谷底發生在高峰之後；在整個期間內取最小值
+(谷底 − 高峰) ÷ 高峰
+# 限制：谷底必須發生在高峰之後；整段期間取最小值
 ```
 
 ---
 
-**4) 年化波動率（Annualized Volatility）**  `vol_ann`
+### 4) 年化波動率（Annualized Volatility） `vol_ann`
 
 * 用途：衡量價格/報酬的波動程度，是 Sharpe 比的分母。
 * 公式：
 
 ```
-σ_年 = σ_日 × √252   # σ_日 為期間內日報酬的標準差
+σ_年 = σ_日 × √252
+# σ_日 為期間內日報酬的標準差
 ```
 
 ---
 
-**5) 夏普值（Sharpe Ratio）**  `sharpe_ratio`
+### 5) 夏普值（Sharpe Ratio） `sharpe_ratio`
 
 * 用途：每承擔 1 單位波動風險可得到多少報酬；越高越好。
 * 公式：
 
 ```
-Sharpe = 年化報酬 ÷ 年化波動   # 本專案假設無風險利率 RF = 0
+Sharpe = 年化報酬 ÷ 年化波動
+# 本專案假設無風險利率 RF = 0
 ```
 
 ---
 
-**6) 近 12 個月殖利率平均**  `div_yield_12m_avg`
+### 6) 近 12 個月殖利率平均 `div_yield_12m_avg`
 
 * 用途：觀察期間內的股息收益水準。
 * 公式：
 
 ```
-平均( 近12個月現金股利 ÷ 當日價格 )   # 對期間取平均
+平均( 近12個月現金股利 ÷ 當日價格 )
+# 對期間取平均
 ```
 
 ---
 
-**7) 近 12 個月現金股利（最新）**  `dividend_12m_latest`
+### 7) 近 12 個月現金股利（最新） `dividend_12m_latest`
 
 * 用途：呈現期間結束當天的 12 個月累計現金股利（TTM）。
 * 公式：
