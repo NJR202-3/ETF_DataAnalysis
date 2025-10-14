@@ -281,7 +281,6 @@ GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/key.json
 
 ## 🆕 指標
 
-> GitHub 版面相容：每個指標用**小標題 + 清單 + 獨立 code block**，避免擠成同一行。
 
 ### 1) 總報酬率（Total Return） 
 
