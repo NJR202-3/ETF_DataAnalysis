@@ -39,7 +39,7 @@ TWSE → Python 爬蟲 → MySQL → metrics_pipeline
 ### 1️⃣ ETF 資料蒐集爬蟲
 
 * **台股 ETF 清單**：透過 **臺灣證券交易所 (TWSE)** API 取得全部上市 ETF 代碼與基本資料。
-* **歷史價格下載**：逐檔抓取 2015‑01‑01 起至今的每日歷史價格：`open, high, low, close, volume, adjusted_close`（調整後收盤價考慮配息與權值調整）。
+* **歷史價格下載**：逐檔抓取 2020‑01‑01 起至今的每日歷史價格：`open, high, low, close, volume, adjusted_close`（調整後收盤價考慮配息與權值調整）。
 * **配息資料下載**：擷取 `ex_date`（除息日）、`cash_dividend`（每單位現金股利）。同日多筆會彙總。
 * **資料存放**：原始資料寫入 MySQL。所有寫入採 **idempotent UPSERT**（唯一鍵避免重覆/髒資料）：
 
