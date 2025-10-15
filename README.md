@@ -18,7 +18,7 @@
 
 ```
 TWSE → Python 爬蟲 → MySQL → metrics_pipeline
-                ↓
+                      ↓
         (BigQuery ELT 同步與轉換)
                 ↓
              Metabase
