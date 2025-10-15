@@ -332,7 +332,7 @@ uv run -m data_ingestion.metrics_pipeline
 * 用途：衡量整段期間的整體漲跌幅。
 * 公式（可讀）：`(期末資產 ÷ 期初資產) − 1` ；等價於 `∏(1 + r_t) − 1`（以日報酬 `r_t` 連乘）。
 
-### 2) 年化報酬率（CAGR）
+### 2) 年化報酬率（Compound Annual Growth Rate:CAGR）
 
 * 用途：把整段報酬換算成每年的穩定成長率，便於不同區間/產品比較。
 * 公式：`CAGR = (期末 ÷ 期初)^(365/實際天數) − 1` ；等價於 `CAGR = (1 + total_return)^(365/D) − 1`。
