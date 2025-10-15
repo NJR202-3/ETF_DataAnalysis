@@ -17,13 +17,31 @@
 ### 資料流程
 
 ```
-TWSE → Python 爬蟲 → MySQL → metrics_pipeline
-                      ↓
-        (BigQuery ELT 同步與轉換)
-                ↓
-             Metabase
-        ↑                 ↓
-      Airflow DAG   Analytics views / tables
+           ┌──────────────────────┐
+              臺灣證券交易所 (TWSE) 
+           └──────────┬───────────┘
+                      │ (API)
+                      ▼
+               Python 爬蟲
+                      │
+                      ▼
+              metrics_pipeline
+                      │
+                      ▼
+                   MySQL
+                      │
+           (BigQuery ELT 同步與轉換)
+                      ▼
+                BigQuery RAW
+                      │
+                      ▼
+             BigQuery Analytics
+                      │
+                      ▼
+                  Metabase
+
+Airflow DAG：編排整段流程（抓取 → 計算 → 同步 → 轉換），支援重試 / backfill
+Analytics views / tables：位於 BigQuery Analytics（供 Metabase / SQL 查詢）
 ```
 
 ### 分析目標
@@ -39,7 +57,7 @@ TWSE → Python 爬蟲 → MySQL → metrics_pipeline
 ### 1️⃣ ETF 資料蒐集爬蟲
 
 * **台股 ETF 清單**：透過 **臺灣證券交易所 (TWSE)** API 取得全部上市 ETF 代碼與基本資料。
-* **歷史價格下載**：逐檔抓取 2020‑01‑01 起至今的每日歷史價格：`open, high, low, close, volume, adjusted_close`（調整後收盤價考慮配息與權值調整）。
+* **歷史價格下載**：逐檔抓取 2015‑01‑01 起至今的每日歷史價格：`open, high, low, close, volume, adjusted_close`（調整後收盤價考慮配息與權值調整）。
 * **配息資料下載**：擷取 `ex_date`（除息日）、`cash_dividend`（每單位現金股利）。同日多筆會彙總。
 * **資料存放**：原始資料寫入 MySQL。所有寫入採 **idempotent UPSERT**（唯一鍵避免重覆/髒資料）：
 
@@ -91,7 +109,32 @@ mysql+pymysql://app:${MYSQL_PASSWORD}@mysql:3306/ETF?charset=utf8mb4
 
 ### 4️⃣ DAG 排程（Airflow）
 
-* `airflow/dags/ETF_bigquery_etl_dag.py`：每日定時執行 **sync → transform**，具備重試與可追蹤性（可 backfill）。
+* **`airflow/dags/ETF_crawler_etl_dag.py`**：
+
+  * 任務：**Python 爬蟲 → metrics_pipeline → 寫入 MySQL**
+  * 特性：每日排程、重試、可 backfill；容器內自動覆寫 `MYSQL_HOST=mysql`
+
+* **`airflow/dags/ETF_bigquery_etl_dag.py`**：
+
+  * 任務：**MySQL → BigQuery RAW 同步 → BigQuery Analytics 轉換（視圖/物化表）**
+  * 特性：每日排程、重試、可 backfill；自動掛載 SA key 至 `/opt/airflow/key.json`
+
+* **Web UI**：`http://localhost:8080`
+
+* **初始化**：
+
+  ```bash
+  docker compose -f airflow/docker-compose-airflow.yml build --no-cache
+  docker compose -f airflow/docker-compose-airflow.yml up -d
+  docker compose -f airflow/docker-compose-airflow.yml up -d airflow-init
+  ```
+
+* **環境變數（容器內）**：
+
+  * `MYSQL_HOST=mysql`
+  * `GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/key.json`
+
+---
 
 ---
 
@@ -114,8 +157,8 @@ ETF_DataAnalysis/
 │   ├── Dockerfile
 │   ├── docker-compose-airflow.yml
 │   └── dags/
-│       └── ETF_bigquery_etl_dag.py    # DAG: MySQL → BQ → 轉換
-│
+│       ├── ETF_crawler_etl_dag.py     # DAG: 爬蟲 → metrics_pipeline → 寫入 MySQL（20:00）
+│       └── ETF_bigquery_etl_dag.py    # DAG: MySQL → BQ → 轉換（20:30）
 ├── docker-compose-mysql.yml           # MySQL + phpMyAdmin
 ├── docker-compose-metabase.yml        # Metabase
 ├── .env                               # 環境變數（不入版控）
@@ -287,6 +330,46 @@ uv run -m data_ingestion.metrics_pipeline
 
 ---
 
+### 用 Airflow 跑同等流程（每日排程）
+
+* **DAG 1：`ETF_crawler_etl_dag`** — 每日 **20:00**（Asia/Taipei）
+
+  * 任務：`ETF 爬蟲 → metrics_pipeline → 寫入 MySQL`
+* **DAG 2：`ETF_bigquery_etl_dag`** — 每日 **20:30**（Asia/Taipei）
+
+  * 任務：`MySQL → BigQuery RAW 同步 → BigQuery Analytics 轉換`
+
+> 兩個 DAG 採用時間錯位（30 分鐘）避免重疊，確保資料先落地 MySQL 再上傳 BQ。
+
+**啟用與檢查（容器內執行）**
+
+```bash
+docker compose -f airflow/docker-compose-airflow.yml exec airflow-scheduler bash -lc '
+  airflow dags list && \
+  airflow dags unpause ETF_crawler_etl_dag && \
+  airflow dags unpause ETF_bigquery_etl_dag && \
+  airflow dags show ETF_crawler_etl_dag --save /tmp/crawler.dot && \
+  airflow dags show ETF_bigquery_etl_dag --save /tmp/bq.dot
+'
+```
+
+**手動觸發 / 回填**
+
+```bash
+# 立即觸發（測試）
+docker compose -f airflow/docker-compose-airflow.yml exec airflow-scheduler bash -lc '
+  airflow dags trigger ETF_crawler_etl_dag && \
+  sleep 10 && \
+  airflow dags trigger ETF_bigquery_etl_dag
+'
+
+# 回填（範例：補 2025-09-01 ~ 2025-09-07）
+docker compose -f airflow/docker-compose-airflow.yml exec airflow-scheduler bash -lc '
+  airflow dags backfill -s 2025-09-01 -e 2025-09-07 ETF_crawler_etl_dag && \
+  airflow dags backfill -s 2025-09-01 -e 2025-09-07 ETF_bigquery_etl_dag
+'
+```
+
 ## ☁️ BigQuery：輕量 ELT
 
 **同步到 RAW**
@@ -332,7 +415,7 @@ uv run -m data_ingestion.metrics_pipeline
 * 用途：衡量整段期間的整體漲跌幅。
 * 公式（可讀）：`(期末資產 ÷ 期初資產) − 1` ；等價於 `∏(1 + r_t) − 1`（以日報酬 `r_t` 連乘）。
 
-### 2) 年化報酬率（Compound Annual Growth Rate:CAGR）
+### 2) 年化報酬率（CAGR）
 
 * 用途：把整段報酬換算成每年的穩定成長率，便於不同區間/產品比較。
 * 公式：`CAGR = (期末 ÷ 期初)^(365/實際天數) − 1` ；等價於 `CAGR = (1 + total_return)^(365/D) − 1`。
