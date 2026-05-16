@@ -30,7 +30,7 @@ with DAG(
     dag_id="ETF_crawler_etl_dag",
     description="TWSE ETF 價格/股利爬蟲 → 指標計算（metrics_pipeline）",
     default_args=default_args,
-    schedule_interval="0 12 * * *",  # 每天 12:00 UTC（台灣 20:00）
+    schedule_interval="0 20 * * *",  
     catchup=False,
     max_active_runs=1,
     tags=["crawler", "etl", "metrics"],
