@@ -16,8 +16,8 @@ MYSQL_DB   = os.getenv("MYSQL_DB",   "ETF")
 MYSQL_USER = os.getenv("MYSQL_USER", "app")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "app123")
 
-# 拆/合股偵測門檻（>20% 且非除息日）
-SPLIT_THRESHOLD = float(os.getenv("SPLIT_THRESHOLD", "0.20"))
+# 拆/合股偵測門檻（>25% 且非除息日）
+SPLIT_THRESHOLD = float(os.getenv("SPLIT_THRESHOLD", "0.25"))
 
 def _url() -> str:
     return f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DB}?charset=utf8mb4"
@@ -55,7 +55,7 @@ def build_adjusted_close(engine: Engine, threshold: float = SPLIT_THRESHOLD) -> 
                 close = float(rows[i].close)
                 is_div = int(rows[i].is_div) == 1
                 ratio = close / prev if prev else 1.0
-                if (not is_div) and abs(ratio - 1.0) >= threshold and 0.2 <= ratio <= 5.0:
+                if (not is_div) and abs(ratio - 1.0) >= threshold and 0.1 <= ratio <= 5.0:
                     fac *= (prev / close)  # 拆/合股校正
                 adj = round(close * fac, 6)
                 payload.append((tk, str(rows[i].trade_date), adj))
